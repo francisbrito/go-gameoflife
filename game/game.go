@@ -138,24 +138,17 @@ func (g *Game) drawGrid(screen *ebiten.Image) {
 }
 
 func (g *Game) cycle() {
-	// Create a new grid for the next generation
 	var newGrid [maxColumns][maxRows]bool
-
 	for i := 0; i < g.columns; i++ {
 		for j := 0; j < g.rows; j++ {
 			count := g.countLiveNeighbors(i, j)
-
 			if g.grid[i][j] {
-				// Live cell stays alive if it has 2 or 3 live neighbors
 				newGrid[i][j] = count == 2 || count == 3
 			} else {
-				// Dead cell becomes alive if it has exactly 3 live neighbors
 				newGrid[i][j] = count == 3
 			}
 		}
 	}
-
-	// Update the grid with the new generation
 	g.grid = newGrid
 	g.generation++
 }
@@ -164,17 +157,11 @@ func (g *Game) countLiveNeighbors(x, y int) int {
 	count := 0
 	for i := -1; i <= 1; i++ {
 		for j := -1; j <= 1; j++ {
-			// Skip the cell itself
 			if i == 0 && j == 0 {
 				continue
 			}
-
-			// Calculate neighbor coordinates
 			nx, ny := x+i, y+j
-
-			// Check if neighbor is within bounds
 			if nx >= 0 && nx < g.columns && ny >= 0 && ny < g.rows {
-				// Count live neighbors
 				if g.grid[nx][ny] {
 					count++
 				}
