@@ -13,9 +13,9 @@ import (
 const (
 	screenWidth  = 640
 	screenHeight = 480
-	cellSize     = 10
-	columns      = screenWidth / cellSize
-	rows         = screenHeight / cellSize
+	minCellSize  = 10
+	maxColumns   = screenWidth / minCellSize
+	maxRows      = screenHeight / minCellSize
 )
 
 type GameState int
@@ -31,18 +31,76 @@ func (s GameState) String() string {
 }
 
 const (
-	Paused  GameState = 0
-	Running           = 1
+	Paused GameState = iota
+	Running
 )
 
+type GameTheme int
+
+const (
+	GameThemeDark GameTheme = iota
+	GameThemeLight
+)
+
+func (g GameTheme) String() string {
+	switch g {
+	case GameThemeLight:
+		return "Light"
+	case GameThemeDark:
+		return "Dark"
+	}
+	return fmt.Sprintf("Unknown (%d)", g)
+}
+
 type Game struct {
+	backgroundColor    color.Color
 	gridColor          color.Color
 	cellColor          color.Color
-	grid               [columns][rows]bool
+	grid               [maxColumns][maxRows]bool
+	cellSize           int
+	columns            int
+	rows               int
 	ticks              int
 	generation         int
 	ticksPerGeneration int
 	state              GameState
+	theme              GameTheme
+}
+
+type NewGameOptions struct {
+	Theme    GameTheme
+	CellSize int
+}
+
+func NewGameFromOptions(options NewGameOptions) *Game {
+	if options.CellSize < 10 {
+		log.Fatalf("cell size must be greater than 10, got %d", options.CellSize)
+	}
+	columns := screenWidth / options.CellSize
+	rows := screenHeight / options.CellSize
+	var gridColor, cellColor, backgroundColor color.Color
+	if options.Theme == GameThemeLight {
+		backgroundColor = color.White
+		gridColor = color.Gray{Y: 127}
+		cellColor = color.Gray{Y: 255}
+	} else if options.Theme == GameThemeDark {
+		backgroundColor = color.Black
+		gridColor = color.Gray{Y: 31}
+		cellColor = color.White
+	} else {
+		log.Fatalf("invalid theme: %s", options.Theme)
+	}
+	return &Game{
+		backgroundColor:    backgroundColor,
+		gridColor:          gridColor,
+		cellColor:          cellColor,
+		cellSize:           options.CellSize,
+		columns:            columns,
+		rows:               rows,
+		state:              Paused,
+		ticksPerGeneration: ebiten.TPS() / 8,
+		theme:              options.Theme,
+	}
 }
 
 func (g *Game) Update() error {
@@ -58,7 +116,7 @@ func (g *Game) Update() error {
 			g.state = Paused
 		}
 		x, y := ebiten.CursorPosition()
-		cellX, cellY := x/cellSize, y/cellSize
+		cellX, cellY := x/g.cellSize, y/g.cellSize
 		g.grid[cellX][cellY] = !g.grid[cellX][cellY]
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
@@ -67,10 +125,14 @@ func (g *Game) Update() error {
 	if inpututil.IsKeyJustPressed(ebiten.KeyR) {
 		g.reset()
 	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyT) {
+		g.switchTheme()
+	}
 	return nil
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	g.drawBackground(screen)
 	g.drawGrid(screen)
 	g.drawDebugInfo(screen)
 }
@@ -79,26 +141,28 @@ func (g *Game) drawDebugInfo(screen *ebiten.Image) {
 	fps := ebiten.ActualFPS()
 	tps := ebiten.ActualTPS()
 	maxTps := ebiten.TPS()
-	msg := fmt.Sprintf("FPS: %.2f\nTPS: %.2f (%d)\nTPG: %d\nGeneration: %d\nGame State: %s",
-		fps, tps, maxTps, g.ticksPerGeneration, g.generation, g.state)
-	ebitenutil.DebugPrintAt(screen, msg, cellSize, cellSize)
+	msg := fmt.Sprintf(
+		"FPS: %.2f\nTPS: %.2f (%d)\nTPG: %d\nGeneration: %d\nGame State: %s\nTheme: %s\nPress R to restart\nPress Space to pause\nPress T to switch themes",
+		fps, tps, maxTps, g.ticksPerGeneration, g.generation, g.state, g.theme)
+	ebitenutil.DebugPrintAt(screen, msg, 16, 16)
 }
 
 func (g *Game) drawGrid(screen *ebiten.Image) {
-	for i := 0; i < columns; i++ {
-		x := float32(cellSize * i)
+	for i := 0; i < g.columns; i++ {
+		x := float32(g.cellSize * i)
 		vector.StrokeLine(screen, x, 0, x, screenHeight, 1.0, g.gridColor, true)
 	}
-	for j := 0; j < rows; j++ {
-		y := float32(cellSize * j)
+	for j := 0; j < g.rows; j++ {
+		y := float32(g.cellSize * j)
 		vector.StrokeLine(screen, 0, y, screenWidth, y, 1.0, g.gridColor, true)
 	}
-	for i := 0; i < columns; i++ {
-		for j := 0; j < rows; j++ {
+	for i := 0; i < g.columns; i++ {
+		for j := 0; j < g.rows; j++ {
 			isAlive := g.grid[i][j]
-			x, y := float32(i*cellSize), float32(j*cellSize)
+			x, y := float32(i*g.cellSize), float32(j*g.cellSize)
+			size := float32(g.cellSize)
 			if isAlive {
-				vector.DrawFilledRect(screen, x, y, cellSize, cellSize, g.cellColor, true)
+				vector.DrawFilledRect(screen, x, y, size, size, g.cellColor, true)
 			}
 		}
 	}
@@ -106,10 +170,10 @@ func (g *Game) drawGrid(screen *ebiten.Image) {
 
 func (g *Game) cycle() {
 	// Create a new grid for the next generation
-	var newGrid [columns][rows]bool
+	var newGrid [maxColumns][maxRows]bool
 
-	for i := 0; i < columns; i++ {
-		for j := 0; j < rows; j++ {
+	for i := 0; i < g.columns; i++ {
+		for j := 0; j < g.rows; j++ {
 			count := g.countLiveNeighbors(i, j)
 
 			if g.grid[i][j] {
@@ -140,7 +204,7 @@ func (g *Game) countLiveNeighbors(x, y int) int {
 			nx, ny := x+i, y+j
 
 			// Check if neighbor is within bounds
-			if nx >= 0 && nx < columns && ny >= 0 && ny < rows {
+			if nx >= 0 && nx < g.columns && ny >= 0 && ny < g.rows {
 				// Count live neighbors
 				if g.grid[nx][ny] {
 					count++
@@ -165,22 +229,34 @@ func (g *Game) toggleState() {
 }
 
 func (g *Game) reset() {
-	for i := 0; i < columns; i++ {
-		for j := 0; j < rows; j++ {
+	for i := 0; i < g.columns; i++ {
+		for j := 0; j < g.rows; j++ {
 			g.grid[i][j] = false
 			g.generation = 0
 		}
 	}
 }
 
+func (g *Game) switchTheme() {
+	if g.theme == GameThemeDark {
+		g.theme = GameThemeLight
+	} else {
+		g.theme = GameThemeDark
+	}
+}
+
+func (g *Game) drawBackground(screen *ebiten.Image) {
+	screen.Fill(g.backgroundColor)
+}
+
 func main() {
 	ebiten.SetWindowTitle("Game of Life")
 	ebiten.SetWindowSize(screenWidth, screenHeight)
-	g := &Game{
-		gridColor:          color.RGBA{R: 63, G: 63, B: 63, A: 255},
-		cellColor:          color.White,
-		ticksPerGeneration: ebiten.TPS() * 4,
-	}
+	ebiten.SetScreenClearedEveryFrame(true)
+	g := NewGameFromOptions(NewGameOptions{
+		Theme:    GameThemeDark,
+		CellSize: 10,
+	})
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
